@@ -5,13 +5,16 @@ import torch.fft as fft
 import math
 
 
-def rotation_matrix(angles: torch.Tensor) -> Tuple:
+def rotation_matrix(
+        angles: torch.Tensor
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    angles: (batch, 3) in radian, counter-clockwise, around xyz axes in order
+    angles: (batch, 3) in degrees, counter-clockwise, around xyz axes in order
     """
-    ang_x = angles[:, 0]
-    ang_y = angles[:, 1]
-    ang_z = angles[:, 2]
+
+    # Convert degrees to radians
+    angles = angles * math.pi / 180.
+
     batch = len(angles)
     Rx, Ry, Rz = torch.zeros(3, batch, 3, 3)
     ang_x = angles[:, 0]
@@ -38,8 +41,8 @@ def rotation_matrix(angles: torch.Tensor) -> Tuple:
 def backprojection(projections: torch.Tensor,
                    angles: torch.Tensor):  #-> torch.Tensor:
     """
-    projections: (batch, C, H, W)
-    angles: (batch, 3) in radian, counter-clockwise
+    projections: (batch, H, W)
+    angles: (batch, 3) in degrees, counter-clockwise
     """
     H, W = projections.shape[-2:]
     batch = projections.size(dim=0)
@@ -49,52 +52,63 @@ def backprojection(projections: torch.Tensor,
 
     # Get the 3D coordinates of an unrotated slice
     # the slice array store the coordinates of a plane in a 3D volume
-    # i_index = torch.arange(H // 2 + 1 - H, H // 2 + 1)
-    # j_index = torch.arange(W // 2 + 1 - W, W // 2 + 1)
     i_index = torch.arange(-H // 2, H // 2)
     j_index = torch.arange(-W // 2, W // 2)
     slice_i, slice_j = torch.meshgrid(i_index, j_index, indexing='ij')
     slice_k = torch.zeros(slice_i.size())
     slice = torch.dstack((slice_i, slice_j, slice_k))
     slice = slice.unsqueeze(0).repeat(batch, 1, 1, 1)
+    # slice.shape = [batch, H, W, 3]
 
     # Fourier transform of projections
+    # fft_proj.shape = [batch, H, W]
     fft_proj = fft.fftshift(fft.fft2(projections))
-    # proj_vectors = torch.tensor([0, 0,
-    #                              -1.]).unsqueeze(0).repeat(batch,
-    #                                                        1).unsqueeze(2)
 
     # Get rotation matrices
+    # Rx.shape = [batch, 3, 3]
     Rx, Ry, Rz = rotation_matrix(-angles)
-    # proj_vector = torch.matmul(Rz, proj_vectors)
-    # proj_vector = torch.matmul(Ry, proj_vectors)
-    # proj_vector = torch.matmul(Rx, proj_vectors)
-    # rotated_grid = torch.matmul(Rx, grid)
-    # rotated_grid = torch.matmul(Ry, rotated_grid)
-    # rotated_grid = torch.matmul(Rz, rotated_grid)
 
     # Get the coordinates of slices after rotation
-    rotated_slice = torch.einsum('ijk, ibck->ibcj', Rx, slice)
-    rotated_slice = torch.einsum('ijk, ibck->ibcj', Ry, rotated_slice)
-    rotated_slice = torch.einsum('ijk, ibck->ibcj', Rz, rotated_slice)
+    rotated_slice = torch.einsum('bij, bhwj->bhwi', Rx, slice)
+    rotated_slice = torch.einsum('bij, bhwj->bhwi', Ry, rotated_slice)
+    rotated_slice = torch.einsum('bij, bhwj->bhwi', Rz, rotated_slice)
 
     # Find coordinates of the 8 nearest neighbor grid points of each rotated slice coordinate
-    ceil_x = rotated_slice.ceil()[:, :, :, 0]
-    ceil_y = rotated_slice.ceil()[:, :, :, 1]
-    ceil_z = rotated_slice.ceil()[:, :, :, 2]
-    floor_x = rotated_slice.floor()[:, :, :, 0]
-    floor_y = rotated_slice.floor()[:, :, :, 1]
-    floor_z = rotated_slice.floor()[:, :, :, 2]
-    p1 = torch.stack([floor_x, floor_y, ceil_z], dim=-1)
-    p2 = torch.stack([floor_x, ceil_y, ceil_z], dim=-1)
-    p3 = torch.stack([ceil_x, ceil_y, ceil_z], dim=-1)
-    p4 = torch.stack([ceil_x, floor_y, ceil_z], dim=-1)
-    p5 = torch.stack([floor_x, floor_y, floor_z], dim=-1)
-    p6 = torch.stack([floor_x, ceil_y, floor_z], dim=-1)
-    p7 = torch.stack([ceil_x, ceil_y, floor_z], dim=-1)
-    p8 = torch.stack([ceil_x, floor_y, floor_z], dim=-1)
+    # Nearest neighbor points of a cube in order 111, -111, -1-11, 1-11, 11-1, -11-1, -1-1-1, 1-1-1
+    nearest_neighbor_coord = torch.zeros(batch, H, W, 8, 3)
+    rotated_slice_ceil = torch.ceil(rotated_slice)
+    rotated_slice_floor = torch.floor(rotated_slice)
+    nearest_neighbor_coord[:, :, :, 0, :] = rotated_slice_ceil
+    nearest_neighbor_coord[:, :, :, 1, :] = rotated_slice_ceil
+    nearest_neighbor_coord[:, :, :, 1, 0] = rotated_slice_floor[:, :, :, 0]
+    nearest_neighbor_coord[:, :, :, 2, :] = rotated_slice_floor
+    nearest_neighbor_coord[:, :, :, 2, 2] = rotated_slice_ceil[:, :, :, 2]
+    nearest_neighbor_coord[:, :, :, 3, :] = rotated_slice_ceil
+    nearest_neighbor_coord[:, :, :, 3, 1] = rotated_slice_floor[:, :, :, 1]
+    nearest_neighbor_coord[:, :, :, 4, :] = rotated_slice_ceil
+    nearest_neighbor_coord[:, :, :, 4, 2] = rotated_slice_floor[:, :, :, 2]
+    nearest_neighbor_coord[:, :, :, 5, :] = rotated_slice_floor
+    nearest_neighbor_coord[:, :, :, 5, 1] = rotated_slice_ceil[:, :, :, 1]
+    nearest_neighbor_coord[:, :, :, 6, :] = rotated_slice_floor
+    nearest_neighbor_coord[:, :, :, 7, :] = rotated_slice_floor
+    nearest_neighbor_coord[:, :, :, 7, 0] = rotated_slice_ceil[:, :, :, 0]
 
     # Distance(volume of sub-cubic) from the nearest neighbor points
+    distances_from_neighbors = torch.zeros(batch, H, W, 8)
+    for i in range(8):
+        distances_from_neighbors[:, :, :, i] = torch.abs(
+            torch.prod(rotated_slice - nearest_neighbor_coord[:, :, :, i, :],
+                       dim=3))
+    print(rotated_slice[0,0,0])
+    print(nearest_neighbor_coord[0,0,0])
+    # print(distances_from_neighbors[0,0,0])
+    # print(torch.sum(distances_from_neighbors[0,0,0]))
+
+    # print(rotated_slice[0])
+    # print(nearest_neighbor_coord[0])
+    # print(distances_from_neighbors[0])
+    # print(distances_from_neighbors.shape)
+
     w1 = (rotated_slice[:, :, :, 0] -
           floor_x) * (rotated_slice[:, :, :, 1] -
                       floor_y) * (ceil_z - rotated_slice[:, :, :, 2])
@@ -129,22 +143,16 @@ def backprojection(projections: torch.Tensor,
     #             for j in fft_proj[batch][channel][i]:
     #                 pass
 
-    print(fft_proj.size())
-    print(w1.size())
-    print(p1.size())
-
-    B, C, H, W = fft_proj.size()
-    print(B, C, H, W)
+    B, H, W = fft_proj.size()
+    print(B, H, W)
     for b in range(B):
-        for c in range(C):
-            for i in range(H):
-                for j in range(W):
-                    # print(fft_proj[b][c][i][j])
-                    print(fft_proj[b][c][i][j])
-                    print(rotated_slice[b][i][j])
-                    print(p1[b][i][j])
-                    print(w1[b][i][j])
-                    break
+        for i in range(H):
+            for j in range(W):
+                # print(fft_proj[b][c][i][j])
+                print(fft_proj[b][i][j])
+                print(rotated_slice[b][i][j])
+                print(p1[b][i][j])
+                print(w1[b][i][j])
                 break
             break
         break
