@@ -1,9 +1,7 @@
 import torch
-from scipy.ndimage import rotate
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms.functional import rotate
 from torch.nn.functional import pad
-from typing import Tuple, List
 
 
 def rotate3d(

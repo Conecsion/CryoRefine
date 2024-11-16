@@ -1,0 +1,16 @@
+project:
+  root_dir: "" 
+  checkpoints_dir: "checkpoints"
+  save_interval: 5
+
+data:
+  batch_size: 128
+
+training:
+  paradigm: "pretrain"  # pretrain | train | inference
+
+pretrain:
+  data_dir: "./data/pretrain"
+  preprocess:
+    - noise: 0.2
+    - 
