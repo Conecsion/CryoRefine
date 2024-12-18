@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools", "numpy", "scipy", "matplotlib"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "refine"
+version = "0.0.1"
+authors = [
+  { name="Conecsion", email="yangshaodi21@mails.ucas.ac.cn" },
+]
+description = "Refine CryoEM 3D Structures with Deep Learning"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]

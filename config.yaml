@@ -1,0 +1,18 @@
+project:
+  rootDir: ""   # Absolute path; the root directory of the whole project; all data will be read from all written into here
+  checkpointsDir: "checkpoints"
+  cacheDir: "cache"
+  saveInterval: 5
+
+data:
+  batchSize: 128
+
+training:
+  paradigm: "pretrain"  # pretrain | train | inference
+
+pretrain:
+  dataDir: "./data/pretrain"
+  preprocess:
+    - noise: 0.2
+    - 
+  embeddingDim: 1000
