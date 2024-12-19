@@ -2,16 +2,14 @@ import torch
 import torch.nn.functional as F
 
 
-def rotate3D(volume: torch.Tensor, angleDegree: torch.Tensor) -> torch.Tensor:
+def zyz2AffineMat(angleDegree: torch.Tensor) -> torch.Tensor:
     '''
-    Rotate the input volume by angleDegree anti-clockwise
-    volume shape (N, C, D, H, W); (D, H, W) corresponds to (Z, Y, X) of a density map
-    angleDegree shape (N, 3) ; the angles are given by ZYZ convention order, which is (phi, theta, psi) in an intrinsic way
-    return shape (N, C, D, H, W)
+    angleDegree shape (N, 3) ; the rotation angles are given by ZYZ convention order, which is (phi, theta, psi) in an intrinsic way
+    return shape (N, 3, 4)
     '''
-    device = volume.device
+    device = angleDegree.device
+    batchSize = angleDegree.shape[0]
     angleRadian = torch.deg2rad(angleDegree)
-    batchSize = volume.shape[0]
 
     # Construct the rotation matrices with shape (N, 3, 3)
     # Rphi rotate around z axis
@@ -52,20 +50,37 @@ def rotate3D(volume: torch.Tensor, angleDegree: torch.Tensor) -> torch.Tensor:
     But this strange function affine_grid seems to rotate the grids instead of the object
     So Rpsi @ Rtheta @ Rphi is correct
     '''
-    R = Rpsi @ Rtheta @ Rphi
+    R = Rpsi @ Rtheta @ Rphi  # R shape (N, 3, 3)
 
     # Construct the affine matrices with shape (N, 3, 4)
     # No translation is applied, got zero vectors
     translationVectors = torch.zeros(batchSize, 3, 1).to(
         device)  # translationVectors shape (N, 3, 1)
+
+    # affineMatrices shape (N, 3, 4)
     affineMatrices = torch.cat((R, translationVectors), 2)
+
+    return affineMatrices
+
+
+def rotate3D(volume: torch.Tensor,
+             affineMatrices: torch.Tensor,
+             interpolation='bilinear') -> torch.Tensor:
+    '''
+    Rotate the input volume by affineMatrices
+    volume shape (N, C, D, H, W), in which (D, H, W) corresponds to (Z, Y, X) axes of a density map
+    affineMatrices shape (N, 3, 4)
+    return shape (N, C, D, H, W)
+    '''
+    device = volume.device
+    affineMatrices.to(device)
     rotatedGrid = F.affine_grid(affineMatrices,
                                 volume.shape,
                                 align_corners=False)
     volume = F.grid_sample(volume,
                            rotatedGrid,
-                           mode='nearest',
-                           align_corners=False)
+                           mode=interpolation,
+                           align_corners=False).to(device)
 
     return volume
 
@@ -114,32 +129,3 @@ if __name__ == '__main__':
     def save(volume: torch.Tensor, filename: str):
         with mrcfile.new('tests/' + filename, overwrite=True) as mrc:
             mrc.set_data(sque(volume).numpy())
-
-    affine_mat = torch.tensor([[[1, 0, 0, 1], [0, 1, 0, 0],
-                                [0, 0, 1, 0]]]).to(torch.float)
-    grid = F.affine_grid(affine_mat, (1, 1, 300, 300, 300),
-                         align_corners=False)
-    trans = F.grid_sample(unsq(volume),
-                          grid,
-                          mode='bilinear',
-                          align_corners=False)
-    save(trans, 'trans.mrc')
-    pr = project(unsq(volume))
-    R1 = rotate3D(volume.unsqueeze(0).unsqueeze(0), torch.tensor([[45, 0, 0]]))
-    R2 = rotate3D(unsq(volume), torch.tensor([[45, 45, 0]]))
-    # R3 = rotate3D(R2, torch.tensor([[0, 0, 45]]))
-    # R4 = rotate3D(
-    #     volume.unsqueeze(0).unsqueeze(0), torch.tensor([[45, 45, 45]]))
-    with mrcfile.new('tests/R1.mrc', overwrite=True) as mrc:
-        mrc.set_data(R1.squeeze(0).squeeze(0).numpy())
-    with mrcfile.new('tests/R2.mrc', overwrite=True) as mrc:
-        mrc.set_data(R2.squeeze(0).squeeze(0).numpy())
-    # with mrcfile.new('tests/R3.mrc', overwrite=True) as mrc:
-    #     mrc.set_data(R3.squeeze(0).squeeze(0).numpy())
-    # with mrcfile.new('tests/R4.mrc', overwrite=True) as mrc:
-    #     mrc.set_data(R4.squeeze(0, 1).numpy())
-
-    pr = sque(pr)
-    pr = pr.numpy()
-    axes[0].imshow(pr, cmap='gray')
-    plt.show()
