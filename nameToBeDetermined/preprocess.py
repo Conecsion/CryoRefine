@@ -39,4 +39,4 @@ for file in volumeFiles:
         with concurrent.futures.ProcessPoolExecutor() as executor:
             id = ''
             outputFilenames = os.path.splitext(file)[0] + id + '.png'
-            executor.map(, projections)
+            executor.map(tensor2png, projections)
