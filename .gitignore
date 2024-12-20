@@ -1,5 +1,8 @@
 data/
+tests/
 *.ipynb
 *.pyc
 *.mrc
+*.map
+*.png
 notebook/

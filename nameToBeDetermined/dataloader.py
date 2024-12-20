@@ -1,5 +1,5 @@
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, IterableDataset
 import mrcfile
 import os
 from operation3D import rotate3D, project
@@ -12,18 +12,20 @@ class ProjectionWithAngles():
         self.angles = angles
 
 
-class ProjectionDataset(Dataset):
+class ProjectionDataset(IterableDataset):
 
     def __init__(self, volumeDir, transform=None):
+        super(ProjectionDataset).__init__()
         self.volumeDir = volumeDir
         self.volumeFiles = []
         for file in os.listdir(self.volumeDir):
             if file.endswith('.mrc') or file.endswith('.map'):
                 self.volumeFiles.append(file)
         self.transfomr = transform
+    
+    def __iter__(self):
+        worker_info = torch.utils.data.get_worker_info()
+        start = 0
+        end = 10
+        return iter(range(start, end))
 
-    def __len__(self):
-        return len(self.volumeFiles)
-
-    def __getitem__(self, idx):
-        pass

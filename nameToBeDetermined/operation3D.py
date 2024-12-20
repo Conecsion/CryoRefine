@@ -1,79 +1,43 @@
 import torch
 import torch.nn.functional as F
+from pytorch3d.transforms import euler_angles_to_matrix
 
 
-def zyz2AffineMat(angleDegree: torch.Tensor) -> torch.Tensor:
+def degrees2mat(angleDegree: torch.Tensor, convention='ZYZ') -> torch.Tensor:
     '''
-    angleDegree shape (N, 3) ; the rotation angles are given by ZYZ convention order, which is (phi, theta, psi) in an intrinsic way
-    return shape (N, 3, 4)
+    Convert Euler angles to rotation matrices
+    angleDegree shape (N, 3);
+    The rotation angles are given convention order, which is (phi, theta, psi) in an intrinsic way as default
+    return shape (N, 3, 3)
     '''
     device = angleDegree.device
     batchSize = angleDegree.shape[0]
     angleRadian = torch.deg2rad(angleDegree)
-
-    # Construct the rotation matrices with shape (N, 3, 3)
-    # Rphi rotate around z axis
-    Rphi = torch.zeros(batchSize, 3, 3)
-    Rphi[:, 0, 0] = torch.cos(angleRadian[:, 0])
-    Rphi[:, 0, 1] = -torch.sin(angleRadian[:, 0])
-    Rphi[:, 1, 0] = torch.sin(angleRadian[:, 0])
-    Rphi[:, 1, 1] = torch.cos(angleRadian[:, 0])
-    Rphi[:, 2, 2] = 1
-    # Make rotation right-handed
-    Rphi = torch.inverse(Rphi)
-
-    # Rtheta rotate around y' axis
-    Rtheta = torch.zeros(batchSize, 3, 3)
-    Rtheta[:, 0, 0] = torch.cos(angleRadian[:, 1])
-    Rtheta[:, 0, 2] = torch.sin(angleRadian[:, 1])
-    Rtheta[:, 1, 1] = 1
-    Rtheta[:, 2, 0] = -torch.sin(angleRadian[:, 1])
-    Rtheta[:, 2, 2] = torch.cos(angleRadian[:, 1])
-    Rtheta = torch.inverse(Rtheta)  # Make rotation right-handed
-
-    # Rpsi rotate around z'' axis
-    Rpsi = torch.zeros(batchSize, 3, 3)
-    Rpsi[:, 0, 0] = torch.cos(angleRadian[:, 2])
-    Rpsi[:, 0, 1] = -torch.sin(angleRadian[:, 2])
-    Rpsi[:, 1, 0] = torch.sin(angleRadian[:, 2])
-    Rpsi[:, 1, 1] = torch.cos(angleRadian[:, 2])
-    Rpsi[:, 2, 2] = 1
-    Rpsi = torch.inverse(Rpsi)  # Make rotation right-handed
-
-    Rphi = Rphi.to(device)
-    Rtheta = Rtheta.to(device)
-    Rpsi = Rpsi.to(device)
-    '''
-    In a intrinsic rotation, the object should first rotate around Z axis for Rphi degree anti-clockwise,
-    then Y' axis for Rtheta, then Z'' axis for Rpsi
-    I know for an intrinsic rotation I need to write the formula as Rphi @ Rtheta @ Rpsi
-    But this strange function affine_grid seems to rotate the grids instead of the object
-    So Rpsi @ Rtheta @ Rphi is correct
-    '''
-    R = Rpsi @ Rtheta @ Rphi  # R shape (N, 3, 3)
-
-    # Construct the affine matrices with shape (N, 3, 4)
-    # No translation is applied, got zero vectors
-    translationVectors = torch.zeros(batchSize, 3, 1).to(
-        device)  # translationVectors shape (N, 3, 1)
-
-    # affineMatrices shape (N, 3, 4)
-    affineMatrices = torch.cat((R, translationVectors), 2)
-
-    return affineMatrices
-
+    return euler_angles_to_matrix(angleRadian, convention).to(device)
 
 def rotate3D(volume: torch.Tensor,
-             affineMatrices: torch.Tensor,
+             rotMat: torch.Tensor,
              interpolation='bilinear') -> torch.Tensor:
     '''
     Rotate the input volume by affineMatrices
     volume shape (N, C, D, H, W), in which (D, H, W) corresponds to (Z, Y, X) axes of a density map
-    affineMatrices shape (N, 3, 4)
+    rotMat shape (N, 3, 3)
     return shape (N, C, D, H, W)
     '''
     device = volume.device
-    affineMatrices.to(device)
+    batchSize = volume.shape[0]
+
+    # affine_grid rotate the grids instead of the object, so the rotation matrices need to be inversed
+    rotMat = torch.inverse(rotMat).to(device)
+
+    # Pad translation vectors to construct the affine matrices with shape (N, 3, 4)
+    # No translation is applied, got zero vectors
+    translationVectors = torch.zeros(batchSize, 3, 1).to(
+        device)  # translationVectors shape (N, 3, 1)
+    # affineMatrices shape (N, 3, 4)
+    affineMatrices = torch.cat((rotMat, translationVectors), 2).to(device)
+
+    # Rotate the volume
     rotatedGrid = F.affine_grid(affineMatrices,
                                 volume.shape,
                                 align_corners=False)
@@ -129,3 +93,21 @@ if __name__ == '__main__':
     def save(volume: torch.Tensor, filename: str):
         with mrcfile.new('tests/' + filename, overwrite=True) as mrc:
             mrc.set_data(sque(volume).numpy())
+
+    import pytorch3d.transforms as p3dt
+    import numpy as np
+
+    r1Deg = angle(45, 0, 0)
+    r2Deg = angle(45, 50, 0)
+    r3Deg = angle(45, 50, 70)
+    r1Mat = degrees2mat(r1Deg)
+    r2Mat = degrees2mat(r2Deg)
+    r3Mat = degrees2mat(r3Deg)
+    volume = volume[None, None, :]
+    print(volume.shape)
+    r1 = rotate3D(volume, r1Mat)
+    r2 = rotate3D(volume, r2Mat)
+    r3 = rotate3D(volume, r3Mat)
+    save(r1, 'r1.mrc')
+    save(r2, 'r2.mrc')
+    save(r3, 'r3.mrc')
